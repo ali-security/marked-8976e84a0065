@@ -1,16 +1,20 @@
 name: "Tests"
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Jasmine spec file(s) to run instead of the full suite'
+        required: false
+        default: ''
 
 jobs:
   Test:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
-        node_version: ['lts/*', 'node']
+        node_version: ['lts/*', 'node', '14']
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -22,49 +26,41 @@ jobs:
       - name: Install Dependencies
         run: npm ci
       - name: Run Unit Tests 👩🏽‍💻
+        if: ${{ inputs.test-filter == '' }}
         run: npm run test:unit
       - name: Run Spec Tests 👩🏽‍💻
+        if: ${{ inputs.test-filter == '' }}
         run: npm run test:specs
-
-  Lint:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-      - name: Install Dependencies
-        run: npm ci
-      - name: Lint ✨
-        run: npm run test:lint
+      - name: Run Filtered Tests 👩🏽‍💻
+        if: ${{ inputs.test-filter != '' }}
+        run: npm test -- ${{ inputs.test-filter }}
 
   Release:
-    needs: [Test, Lint]
-    if: |
-      github.ref == 'refs/heads/master' &&
-      github.event.repository.fork == false
+    needs: [Test]
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
+      - name: Install Node
+        uses: dcodeIO/setup-node-nvm@master
+        with:
+          node-version: '14'
       - name: Install Dependencies
         run: npm ci
       - name: Build 🗜️
         run: |
           npm run build
-          if ! git diff --quiet; then
-            git config --global user.email "<>"
-            git config --global user.name "MarkedJS bot"
-            git commit -am "🗜️ build [skip ci]"
-          fi
-      - name: Release 🎉
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npx semantic-release
-
-  Skip:
-    if: contains(github.event.head_commit.message, '[skip ci]')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Skip CI 🚫
-        run: echo skip ci
+          git diff --stat
+      - name: Pack 📦
+        run: |
+          npm i -g npm@7.12.0
+          npm pack
+          mkdir -p dist
+          mv marked-*.tgz dist/
+      - name: Upload Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: marked-npm
+          path: dist/*.tgz
+          if-no-files-found: error
